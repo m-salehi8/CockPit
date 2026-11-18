@@ -18,6 +18,9 @@ import {
   Flame,
   Activity,
   Terminal,
+  ShieldAlert,
+  Bell,
+  Trash2,
 } from 'lucide-vue-next'
 import { useMetricsStream } from '../composables/useMetricsStream'
 import { useToast } from '../composables/useToast'
@@ -37,6 +40,85 @@ const loadingProcs = ref(false)
 const procSearch = ref('')
 const expandedGroups = ref(new Set())
 const busyAction = ref('')
+
+// Guard Policies & Notification Engine state
+const guardRules = ref([])
+const alertsLog = ref([])
+const guardActive = ref(true)
+const testingNotification = ref(false)
+const savingPolicy = ref(false)
+let policyPollTimer = null
+
+async function fetchGuardPolicies() {
+  try {
+    const res = await fetch('/api/system/policies')
+    const data = await res.json()
+    guardRules.value = data.rules || []
+    alertsLog.value = data.alerts_log || []
+    guardActive.value = Boolean(data.monitor_active)
+  } catch {
+    // Non-fatal on initial load
+  }
+}
+
+async function updatePolicyRule(ruleId, patch) {
+  // Optimistic local update
+  const target = guardRules.value.find((r) => r.id === ruleId)
+  if (target) {
+    Object.assign(target, patch)
+  }
+  savingPolicy.value = true
+  try {
+    const res = await fetch('/api/system/policies', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        policies: {
+          [ruleId]: patch,
+        },
+      }),
+    })
+    const data = await res.json()
+    guardRules.value = data.rules || guardRules.value
+    alertsLog.value = data.alerts_log || alertsLog.value
+  } catch (err) {
+    notify({ title: 'Policy Save Failed', message: String(err), type: 'error' })
+  } finally {
+    savingPolicy.value = false
+  }
+}
+
+async function handleTestNotification() {
+  if (testingNotification.value) return
+  testingNotification.value = true
+  try {
+    const res = await fetch('/api/system/policies/test-notification', { method: 'POST' })
+    const data = await res.json()
+    if (data.state) {
+      guardRules.value = data.state.rules || guardRules.value
+      alertsLog.value = data.state.alerts_log || alertsLog.value
+    }
+    notify({
+      title: data.success ? 'Desktop Notification Sent' : 'Notification Dispatched',
+      message: data.message || 'Check your Ubuntu GNOME notification banner.',
+      type: 'success',
+    })
+  } catch (err) {
+    notify({ title: 'Notification Error', message: String(err), type: 'error' })
+  } finally {
+    testingNotification.value = false
+  }
+}
+
+async function handleClearAlerts() {
+  try {
+    const res = await fetch('/api/system/policies/clear-logs', { method: 'POST' })
+    const data = await res.json()
+    alertsLog.value = data.alerts_log || []
+  } catch (err) {
+    notify({ title: 'Clear Alerts Error', message: String(err), type: 'error' })
+  }
+}
 
 // SVG circular ring helper (r = 16, circumference ≈ 100.53)
 const RING_CIRCUMFERENCE = 2 * Math.PI * 16
@@ -318,10 +400,15 @@ function handleResize() {
 onMounted(() => {
   initChart()
   fetchGroupedProcesses()
+  fetchGuardPolicies()
+  policyPollTimer = window.setInterval(fetchGuardPolicies, 6000)
   window.addEventListener('resize', handleResize)
 })
 
 onBeforeUnmount(() => {
+  if (policyPollTimer) {
+    clearInterval(policyPollTimer)
+  }
   window.removeEventListener('resize', handleResize)
   chartInstance?.dispose()
 })
@@ -683,6 +770,178 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div ref="chartEl" class="w-full h-52" />
+    </div>
+
+    <!-- Minimalist Guard Policies & Tray Notification Engine Panel -->
+    <div class="glass-panel rounded-xl p-5 space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/[0.05] pb-3.5">
+        <div class="flex items-center gap-2.5">
+          <ShieldAlert class="w-4 h-4 text-emerald-400 shrink-0" />
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-zinc-200">
+            Guard Policies &amp; Tray
+          </h3>
+          <span
+            class="px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+            title="Checks vitals every 5s with 10s hysteresis and 5m anti-spam cooldown"
+          >
+            {{ guardActive ? 'Ubuntu Tray & Guard Active' : 'Standby' }}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            @click="handleTestNotification"
+            :disabled="testingNotification"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.03] hover:bg-cyan-500/15 text-zinc-200 hover:text-cyan-300 border border-white/[0.07] hover:border-cyan-500/30 transition-all cursor-pointer disabled:opacity-50"
+            title="Send a sample native Ubuntu desktop notification via notify-send"
+          >
+            <Bell class="w-3.5 h-3.5 text-cyan-400" />
+            <span>{{ testingNotification ? 'Sending...' : 'Test Desktop Notification' }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <!-- Left 7 Cols: Configurable Guard Policy Sliders & Toggles -->
+        <div class="lg:col-span-7 space-y-2.5">
+          <div
+            v-for="rule in guardRules"
+            :key="rule.id"
+            class="p-3.5 rounded-lg bg-[#09090B]/90 border border-white/[0.06] flex flex-col gap-2.5 transition-opacity"
+            :class="rule.enabled ? 'opacity-100' : 'opacity-55'"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-medium text-zinc-100 truncate">{{ rule.name }}</span>
+                  <span
+                    v-if="rule.id === 'auto_rescue_ram'"
+                    class="px-1.5 py-0.5 text-[10px] font-mono rounded bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                  >
+                    Auto-Remediation
+                  </span>
+                </div>
+                <p class="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+                  {{ rule.description }}
+                </p>
+              </div>
+
+              <div class="flex items-center gap-3 shrink-0">
+                <span
+                  class="px-2 py-0.5 rounded bg-[#121215] border border-white/[0.07] font-mono text-xs tabular-nums"
+                  :class="
+                    rule.unit === '°C'
+                      ? 'text-amber-400'
+                      : rule.id === 'auto_rescue_ram'
+                      ? 'text-rose-400'
+                      : 'text-emerald-400'
+                  "
+                >
+                  {{ rule.threshold }}{{ rule.unit }}
+                </span>
+
+                <!-- Minimalist Toggle Switch -->
+                <button
+                  type="button"
+                  @click="updatePolicyRule(rule.id, { enabled: !rule.enabled })"
+                  class="w-9 h-5 rounded-full transition-colors p-0.5 cursor-pointer border border-white/[0.08] flex items-center"
+                  :class="rule.enabled ? 'bg-emerald-500/30 justify-end' : 'bg-zinc-900 justify-start'"
+                  :title="rule.enabled ? 'Disable policy rule' : 'Enable policy rule'"
+                >
+                  <span
+                    class="w-3.5 h-3.5 rounded-full transition-colors"
+                    :class="rule.enabled ? 'bg-emerald-400' : 'bg-zinc-500'"
+                  />
+                </button>
+              </div>
+            </div>
+
+            <!-- Sleek Threshold Slider -->
+            <div class="flex items-center gap-3">
+              <span class="text-[10px] font-mono text-zinc-500 w-9">{{ rule.min }}{{ rule.unit }}</span>
+              <input
+                type="range"
+                :min="rule.min"
+                :max="rule.max"
+                :value="rule.threshold"
+                :disabled="!rule.enabled"
+                @input="(e) => (rule.threshold = Number(e.target.value))"
+                @change="(e) => updatePolicyRule(rule.id, { threshold: Number(e.target.value) })"
+                class="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-emerald-400 disabled:cursor-not-allowed"
+              />
+              <span class="text-[10px] font-mono text-zinc-500 w-10 text-right">
+                {{ rule.max }}{{ rule.unit }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right 5 Cols: Clean Log of Recent Triggered Alerts -->
+        <div class="lg:col-span-5 flex flex-col rounded-lg bg-[#09090B]/90 border border-white/[0.06] p-3.5">
+          <div class="flex items-center justify-between pb-2.5 mb-2.5 border-b border-white/[0.05]">
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
+                Recent Triggered Alerts
+              </span>
+              <span class="px-1.5 py-0.5 text-[10px] font-mono rounded bg-white/[0.04] text-zinc-400">
+                {{ alertsLog.length }}
+              </span>
+            </div>
+            <button
+              v-if="alertsLog.length > 0"
+              @click="handleClearAlerts"
+              class="inline-flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+              title="Clear alert history"
+            >
+              <Trash2 class="w-3 h-3" />
+              <span>Clear</span>
+            </button>
+          </div>
+
+          <div
+            v-if="alertsLog.length === 0"
+            class="flex-1 flex flex-col items-center justify-center py-10 text-center text-zinc-500"
+          >
+            <Bell class="w-5 h-5 text-zinc-600 mb-2" />
+            <p class="text-xs text-zinc-400">No threshold breaches recorded</p>
+            <p class="text-[11px] text-zinc-600 mt-0.5">
+              Click "Test Desktop Notification" to verify native Ubuntu alerts.
+            </p>
+          </div>
+
+          <div v-else class="space-y-2 max-h-80 overflow-y-auto pr-1">
+            <div
+              v-for="alert in alertsLog"
+              :key="alert.id"
+              class="p-2.5 rounded-lg bg-[#121215] border border-white/[0.05] space-y-1"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span
+                    class="w-1.5 h-1.5 rounded-full shrink-0"
+                    :class="
+                      alert.severity === 'critical'
+                        ? 'bg-rose-400'
+                        : alert.severity === 'warning'
+                        ? 'bg-amber-400'
+                        : 'bg-cyan-400'
+                    "
+                  />
+                  <span class="text-xs font-medium text-zinc-200 truncate">
+                    {{ alert.title }}
+                  </span>
+                </div>
+                <span class="text-[10px] font-mono text-zinc-500 shrink-0">
+                  {{ alert.timestamp }}
+                </span>
+              </div>
+              <p class="text-[11px] text-zinc-400 font-mono leading-relaxed break-words">
+                {{ alert.message }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Clean Borderless Process Table with Inline Memory Usage Bar -->

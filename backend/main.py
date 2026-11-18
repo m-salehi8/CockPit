@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 import os
 import platform
 from pathlib import Path
@@ -10,13 +11,25 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from routers import system, packages, storage, services, commands
-from services.metrics import collect_live_metrics, refresh_network_indicators
+from services.metrics import collect_live_metrics, get_lite_vitals, refresh_network_indicators
+from services.policy_guard import policy_guard
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    policy_guard.start()
+    try:
+        yield
+    finally:
+        await policy_guard.stop()
+
 
 app = FastAPI(
     title="Cockpit — Ubuntu 8GB System Assistant & Developer Control Center",
     version="1.0.0",
     docs_url="/api/docs",
     redoc_url=None,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -53,7 +66,14 @@ async def health_check():
         "backend_pid": os.getpid(),
         "backend_rss_mb": rss_mb,
         "active_ws_clients": len(_active_ws_clients),
+        "policy_guard_active": policy_guard._running,
     }
+
+
+@app.get("/api/vitals/lite")
+async def vitals_lite():
+    """Ultra-lightweight vitals endpoint for the Ubuntu Top Bar AppIndicator (polled every 4s)."""
+    return get_lite_vitals()
 
 
 @app.websocket("/ws/metrics")

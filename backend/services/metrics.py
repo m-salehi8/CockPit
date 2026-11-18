@@ -23,6 +23,18 @@ class MetricsState:
         self.dns_last_check: float = 0.0
         self.ping_ms: Optional[int] = None
         self.ping_last_check: float = 0.0
+        self.hogs_last_check: float = 0.0
+        self.cached_top_ram_hog: Dict[str, Any] = {
+            "name": "system",
+            "display_name": "System",
+            "rss_bytes": 0,
+            "rss_gb": 0.0,
+        }
+        self.cached_top_cpu_hog: Dict[str, Any] = {
+            "name": "system",
+            "display_name": "System",
+            "cpu_percent": 0.0,
+        }
 
 
 _state = MetricsState()
@@ -592,6 +604,116 @@ def get_grouped_processes(limit: int = 40) -> Dict[str, Any]:
         "group_count": len(groups),
         "groups": sorted_groups,
     }
+
+
+def get_top_hogs_lite(cache_ttl: float = 3.8) -> Dict[str, Dict[str, Any]]:
+    """
+    Ultra-fast cached scan of top RAM-consuming and top CPU-consuming process groups.
+    Avoids cmdline reads on every tick by grouping on process executable name first.
+    """
+    now = time.monotonic()
+    if (now - _state.hogs_last_check) < cache_ttl and _state.cached_top_ram_hog["rss_bytes"] > 0:
+        return {
+            "ram": _state.cached_top_ram_hog,
+            "cpu": _state.cached_top_cpu_hog,
+        }
+
+    ram_by_group: Dict[str, int] = {}
+    cpu_by_group: Dict[str, float] = {}
+    raw_name_by_group: Dict[str, str] = {}
+
+    for proc in psutil.process_iter(attrs=["name", "memory_info", "cpu_percent"]):
+        try:
+            info = proc.info
+            raw_name = (info.get("name") or "unknown").strip()
+            mem_info = info.get("memory_info")
+            rss = mem_info.rss if mem_info else 0
+            cpu_pct = info.get("cpu_percent") or 0.0
+            if rss <= 0 and cpu_pct <= 0:
+                continue
+
+            base = raw_name.lower()
+            display = APP_GROUP_ALIASES.get(base, raw_name)
+            ram_by_group[display] = ram_by_group.get(display, 0) + rss
+            cpu_by_group[display] = cpu_by_group.get(display, 0.0) + cpu_pct
+            if display not in raw_name_by_group:
+                raw_name_by_group[display] = base
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+    if ram_by_group:
+        top_ram_display, top_ram_bytes = max(ram_by_group.items(), key=lambda kv: kv[1])
+        _state.cached_top_ram_hog = {
+            "name": raw_name_by_group.get(top_ram_display, top_ram_display.lower()),
+            "display_name": top_ram_display,
+            "rss_bytes": top_ram_bytes,
+            "rss_gb": round(top_ram_bytes / (1024 ** 3), 2),
+        }
+
+    if cpu_by_group:
+        top_cpu_display, top_cpu_pct = max(cpu_by_group.items(), key=lambda kv: kv[1])
+        _state.cached_top_cpu_hog = {
+            "name": raw_name_by_group.get(top_cpu_display, top_cpu_display.lower()),
+            "display_name": top_cpu_display,
+            "cpu_percent": round(top_cpu_pct, 1),
+        }
+
+    _state.hogs_last_check = now
+    return {
+        "ram": _state.cached_top_ram_hog,
+        "cpu": _state.cached_top_cpu_hog,
+    }
+
+
+def get_lite_vitals() -> Dict[str, Any]:
+    """
+    Lightweight vitals payload designed for the Ubuntu Top Bar AppIndicator (4s interval)
+    and background Policy Guard (5s interval).
+    """
+    vm = psutil.virtual_memory()
+    sm = psutil.swap_memory()
+    cpu_pct = psutil.cpu_percent(interval=None)
+    temp_c = get_cpu_temperature()
+    hogs = get_top_hogs_lite()
+
+    ram_used_gb = round(vm.used / (1024 ** 3), 1)
+    ram_total_gb = round(vm.total / (1024 ** 3), 1)
+    ram_pct_int = int(round(vm.percent))
+    cpu_pct_int = int(round(cpu_pct))
+
+    if temp_c is not None:
+        temp_str = f" ({int(round(temp_c))}°C)"
+    else:
+        temp_str = ""
+
+    header_label = (
+        f"RAM: {ram_used_gb:.1f} / {ram_total_gb:.1f} GB ({ram_pct_int}%)  •  "
+        f"CPU: {cpu_pct_int}%{temp_str}"
+    )
+
+    top_ram = hogs["ram"]
+    hog_gb = round(top_ram["rss_bytes"] / (1024 ** 3), 1)
+    hog_name = top_ram["name"]
+    hog_label = f"Top Hog: {hog_name} ({hog_gb:.1f} GB)"
+
+    return {
+        "ram_used_gb": ram_used_gb,
+        "ram_total_gb": ram_total_gb,
+        "ram_percent": round(vm.percent, 1),
+        "cpu_percent": round(cpu_pct, 1),
+        "cpu_temp_c": temp_c,
+        "swap_percent": round(sm.percent, 1),
+        "top_ram_hog": top_ram,
+        "top_cpu_hog": hogs["cpu"],
+        "focus_mode_active": _state.focus_mode_active,
+        "dns_profile": _state.dns_profile,
+        "header_label": header_label,
+        "hog_label": hog_label,
+    }
+
+
+def get_focus_mode_state() -> bool:
+    return _state.focus_mode_active
 
 
 async def kill_processes(pids: List[int], force: bool = False) -> Dict[str, Any]:

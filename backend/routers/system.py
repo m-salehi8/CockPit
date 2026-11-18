@@ -1,9 +1,11 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel
 from services.metrics import (
     collect_live_metrics,
     get_grouped_processes,
+    get_lite_vitals,
+    get_focus_mode_state,
     kill_processes,
     drop_memory_caches,
     refresh_swap,
@@ -12,6 +14,7 @@ from services.metrics import (
     switch_dns_profile,
     enable_zram_swap,
 )
+from services.policy_guard import policy_guard
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -22,12 +25,16 @@ class KillRequest(BaseModel):
 
 
 class FocusModeRequest(BaseModel):
-    enable: bool
+    enable: Optional[bool] = None
     services: Optional[List[str]] = None
 
 
 class DnsSwitchRequest(BaseModel):
     profile: str
+
+
+class PolicyUpdateRequest(BaseModel):
+    policies: Dict[str, Dict[str, Any]]
 
 
 @router.get("/snapshot")
@@ -50,6 +57,7 @@ async def terminate_processes(req: KillRequest):
 
 
 @router.post("/rescue/drop-caches")
+@router.post("/drop-caches")
 async def action_drop_caches():
     """Drop Linux kernel PageCache, dentries, and inodes via PolicyKit."""
     return await drop_memory_caches()
@@ -62,9 +70,16 @@ async def action_swap_refresh():
 
 
 @router.post("/rescue/focus-mode")
-async def action_focus_mode(req: FocusModeRequest):
+@router.post("/focus-mode")
+async def action_focus_mode(req: Optional[FocusModeRequest] = None):
     """Toggle Dev Focus Mode to pause or restore heavy background services."""
-    return await toggle_dev_focus_mode(enable=req.enable, custom_services=req.services)
+    target_enable = (
+        req.enable
+        if (req is not None and req.enable is not None)
+        else (not get_focus_mode_state())
+    )
+    custom_svcs = req.services if req is not None else None
+    return await toggle_dev_focus_mode(enable=target_enable, custom_services=custom_svcs)
 
 
 @router.post("/rescue/enable-zram")
@@ -83,3 +98,29 @@ async def get_dns_status():
 async def action_switch_dns(req: DnsSwitchRequest):
     """Switch active interface DNS profile (Shecan / 1.1.1.1 / Auto)."""
     return await switch_dns_profile(req.profile)
+
+
+@router.get("/policies")
+async def get_guard_policies():
+    """Return current System Guard policies, thresholds, and recent triggered alerts."""
+    return policy_guard.get_state()
+
+
+@router.put("/policies")
+@router.post("/policies")
+async def update_guard_policies(req: PolicyUpdateRequest):
+    """Update System Guard policy toggles and thresholds."""
+    return policy_guard.update_policies(req.policies)
+
+
+@router.post("/policies/test-notification")
+@router.post("/policies/test")
+async def test_guard_notification():
+    """Send an immediate test desktop notification via notify-send."""
+    return await policy_guard.trigger_test_notification()
+
+
+@router.post("/policies/clear-logs")
+async def clear_guard_alert_logs():
+    """Clear recent triggered alert logs."""
+    return policy_guard.clear_alerts()

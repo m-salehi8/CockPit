@@ -1,0 +1,35 @@
+{
+  "policies": {
+    "ram_pressure": {
+      "enabled": true,
+      "threshold": 85
+    },
+    "auto_rescue_ram": {
+      "enabled": true,
+      "threshold": 92
+    },
+    "cpu_thermal": {
+      "enabled": true,
+      "threshold": 85
+    },
+    "cpu_load": {
+      "enabled": true,
+      "threshold": 90
+    },
+    "swap_thrashing": {
+      "enabled": true,
+      "threshold": 80
+    }
+  },
+  "alerts_log": [
+    {
+      "id": "1795030856708-test_alert",
+      "timestamp": "22:40:56",
+      "iso_time": "2026-11-18T22:40:56",
+      "rule_id": "test_alert",
+      "title": "Cockpit Guard \u2014 Active & Monitoring",
+      "message": "RAM: 67.2% (4.4 / 6.6 GB) \u2022 CPU: 35.1%. Top consumer: Google Chrome (2.8 GB)",
+      "severity": "info"
+    }
+  ]
+}
