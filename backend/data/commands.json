@@ -1,0 +1,92 @@
+[
+  {
+    "id": "dns-shecan",
+    "title": "DNS: Switch to Shecan",
+    "category": "Network & DNS",
+    "description": "Configure Shecan DNS (178.22.122.100, 185.51.200.2) on the active default route interface via resolvectl.",
+    "command": "pkexec resolvectl dns $(ip route show default | awk '{print $5}' | head -n1) 178.22.122.100 185.51.200.2 && resolvectl status | grep -A 3 \"DNS Servers\"",
+    "requires_root": false,
+    "icon": "shield"
+  },
+  {
+    "id": "dns-cloudflare",
+    "title": "DNS: Switch to Cloudflare (1.1.1.1)",
+    "category": "Network & DNS",
+    "description": "Configure fast Cloudflare DNS (1.1.1.1, 1.0.0.1) on the active default route interface via resolvectl.",
+    "command": "pkexec resolvectl dns $(ip route show default | awk '{print $5}' | head -n1) 1.1.1.1 1.0.0.1 && resolvectl status | grep -A 3 \"DNS Servers\"",
+    "requires_root": false,
+    "icon": "globe"
+  },
+  {
+    "id": "dns-auto",
+    "title": "DNS: Reset to Automatic (DHCP)",
+    "category": "Network & DNS",
+    "description": "Revert custom per-interface DNS settings back to automatic DHCP and flush systemd-resolved caches.",
+    "command": "pkexec resolvectl revert $(ip route show default | awk '{print $5}' | head -n1) && resolvectl flush-caches && echo \"DNS reverted to automatic and cache flushed.\"",
+    "requires_root": false,
+    "icon": "refresh-cw"
+  },
+  {
+    "id": "network-vpn-ip-check",
+    "title": "Network & VPN IP Check",
+    "category": "Network & DNS",
+    "description": "Inspect external public IP geolocation/ASN metadata via ipinfo.io and list all active local network interfaces.",
+    "command": "curl -s https://ipinfo.io/json && echo \"\" && echo \"--- Active Interfaces ---\" && ip -br addr",
+    "requires_root": false,
+    "icon": "activity"
+  },
+  {
+    "id": "flush-dns-cache",
+    "title": "Flush DNS & Socket Cache",
+    "category": "Network & DNS",
+    "description": "Immediately flush systemd-resolved DNS lookup caches.",
+    "command": "resolvectl flush-caches && echo \"Systemd-resolved DNS cache flushed successfully.\"",
+    "requires_root": false,
+    "icon": "zap"
+  },
+  {
+    "id": "docker-full-prune",
+    "title": "Docker Full Prune",
+    "category": "Containers & Storage",
+    "description": "Deep clean all unused Docker containers, dangling/unreferenced images, networks, and volumes.",
+    "command": "docker system prune -af --volumes",
+    "requires_root": false,
+    "icon": "container"
+  },
+  {
+    "id": "top-10-heavy-dirs",
+    "title": "Top 10 Heavy Directories in Home",
+    "category": "Containers & Storage",
+    "description": "Scan your home folder (max-depth 2) and rank the largest space-consuming directories.",
+    "command": "du -h --max-depth=2 ~ 2>/dev/null | sort -hr | head -n 15",
+    "requires_root": false,
+    "icon": "hard-drive"
+  },
+  {
+    "id": "adb-devices-battery",
+    "title": "ADB Connected Devices & Battery",
+    "category": "Developer Tools",
+    "description": "List attached Android Debug Bridge devices and query real-time battery level & charging status.",
+    "command": "adb devices -l && adb shell dumpsys battery | grep -E \"level|status\"",
+    "requires_root": false,
+    "icon": "smartphone"
+  },
+  {
+    "id": "systemd-failed-services",
+    "title": "Systemd Failed Services Check",
+    "category": "System Diagnostics",
+    "description": "Check all systemd units currently in a failed or degraded state.",
+    "command": "systemctl --failed",
+    "requires_root": false,
+    "icon": "alert-triangle"
+  },
+  {
+    "id": "disk-smart-partition-health",
+    "title": "Disk SMART & Partition Health",
+    "category": "System Diagnostics",
+    "description": "Display filesystem type, total size, used space, and mount points for all physical partitions.",
+    "command": "df -hT -x squashfs -x tmpfs -x devtmpfs",
+    "requires_root": false,
+    "icon": "bar-chart-2"
+  }
+]

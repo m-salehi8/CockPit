@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Cockpit
+GenericName=Ubuntu System Assistant & RAM Guard
+Comment=Ultra-lightweight Ubuntu 8GB System Assistant, RAM Rescue & Developer Control Center
+Exec=/home/mohammad/projects/Octane/launch.sh
+Icon=/home/mohammad/projects/Octane/cockpit.svg
+Terminal=false
+Categories=System;Utility;Development;Monitor;
+Keywords=cockpit;system;monitor;ram;swap;ports;packages;cleaner;systemd;ubuntu;
+StartupWMClass=Cockpit
+StartupNotify=true
